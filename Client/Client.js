@@ -71,34 +71,49 @@ const updateTimestamp = (messageTimestamp, eventType) => {
     }
 }
 
-const updateOperationsHistory = (action, updatedString, timestamp) => {
-    operationsHistory.push({ action, updatedString, timestamp });
+//TODO: implement
+const removeOperations = () => {
+    let allClients = Array(otherClients.length).fill(false);
+    let numOfAllClients = otherClients.length;
+
+    console.log(`Client ${id} removed operation <operation, timestamp> from storage`)
+}
+
+const updateOperationsHistory = (action, updatedString, timestamp, cid) => {
+    operationsHistory.push({ action, updatedString, timestamp, cid});
 }
 
 const updateGoodbyeCounter = () => {
     goodbyeCounter--;
     if (goodbyeCounter === 0) {
+        console.log(`Client ${id} finished his local string modifications`);
         console.log(localString);
-        clientsSockets.forEach(clientSocket => clientSocket.end())
+        clientsSockets.forEach(clientSocket => clientSocket.end());
+        console.log(`Client ${id} is exiting`);
+        server.close();
     }
 }
 
 const applyMerge = (action, timestamp, cid) => {
+    console.log(`Client ${id} started merging, from ${timestamp} time stamp, on ${localString}`); // TODO:: verify localString
     let index = operationsHistory.length - 1;
-    while (operationsHistory[index].timestamp > timestamp) {
+    while (index >= 0 && operationsHistory[index].timestamp > timestamp) {
         index--;
     }
-    if (operationsHistory[index].timestamp === timestamp) {
-        while (operationsHistory[index].cid > cid) {
+    if (index >= 0 && operationsHistory[index].timestamp === timestamp) {
+        while (index >= 0 && operationsHistory[index].timestamp === timestamp && operationsHistory[index].cid > cid) {
             index--;
         }
     }
-    localString = operationsHistory[index].updatedString;
-    operationsHistory.splice(index, 0, { action, timestamp, cid });
+    localString = operationsHistory[index === -1 ? index + 1 : index].updatedString;
+    operationsHistory.splice(index + 1, 0, { action, updatedString: localString, timestamp, cid });
 
     for (let i = index + 1; i < operationsHistory.length; i++) {
         applyActionToString(operationsHistory[i].action);
+        operationsHistory[i].updatedString = localString;
+        console.log(`operation ${JSON.stringify(operationsHistory[i].action)}, ${operationsHistory[i].timestamp}, string: ${operationsHistory[i].updatedString}`)
     }
+    console.log(`Client ${id} ended merging with string ${localString}, on timestamp <ending timestamp>`) // TODO: verify what is ending timestamp
 }
 
 function getPosition(string, subString, index) {
@@ -113,17 +128,16 @@ const handleData = (socket, buffer) => {
         const parsedMessage = JSON.parse(buffer.toString().substring(0, getPosition(buffer.toString(), "}", 2) + 1));
         const { action, timestamp, cid } = parsedMessage;
         updateTimestamp(timestamp, 'receive');
-        console.log('receive', timestamp, 'id', cid);
-
+        console.log(`Client ${id} received an update operation ${JSON.stringify(action)}, ${timestamp} from client ${cid}`);
         const index = operationsHistory.length - 1;
         if (index >= 0 && 
             (timestamp < operationsHistory[index].timestamp || 
-                (timestamp === operationsHistory[index].timestamp && id < operationsHistory[index].cid))) {
+                (timestamp === operationsHistory[index].timestamp && cid < operationsHistory[index].cid))) {
             applyMerge(action, timestamp, cid);
         }
         else {
             applyActionToString(action);
-            updateOperationsHistory(action, localString, timestamp);
+            updateOperationsHistory(action, localString, timestamp, cid);
         }
     }
 }
@@ -131,11 +145,14 @@ const handleData = (socket, buffer) => {
 const applyActionToString = (action) => {
     switch (action.type) {
         case 'insert':
+            if (action.index && action.index >= localString.length)
+                break;
             localString = action.index ? localString.slice(0, action.index).concat(action.character).concat(localString.slice(action.index))
                 : localString.concat(action.character);
             break;
         case 'delete':
-            localString = localString.slice(0, action.index).concat(localString.slice(action.index + 1));
+            if (action.index < localString.length)
+                localString = localString.slice(0, action.index).concat(localString.slice(action.index + 1));
             break;
         default:
             break;
@@ -145,30 +162,25 @@ const applyActionToString = (action) => {
 let serversSockets = [];
 let clientsSockets = [];
 
-net.createServer()
+let server = net.createServer()
     .listen(port, "127.0.0.1", () => {
-        console.log(`Server listening on 127.0.0.1:${port}`);
     })
     .on('connection', socket => {
-        console.log(`Someone connected to your port!`);
         clientsSockets.push(socket);
 
         socket.on('data', buffer => {
             handleData(socket, buffer);
         })
     });
-console.log('Server starting...');
 
 const connectToServers = () => {
     for (const otherClient of otherClients) {
         if (otherClient.clientId > id) {
-            let socket = net.createConnection(otherClient.clientPort, otherClient.clientIP, () => {
-                console.log(`Client ${id} connected to Client ${otherClient.clientId}`);
-            });
+            let socket = net.createConnection(otherClient.clientPort, otherClient.clientIP, () => {});
             socket.on('data', buffer => {
                 handleData(socket, buffer);
             })
-            serversSockets.push(socket); // TODO:: check if redundent?
+            serversSockets.push(socket);
         }
     }
 }
@@ -183,16 +195,15 @@ const eventLoop = async () => {
     const sendMessage = async (action) => {
         applyActionToString(action);
         updateTimestamp(myTimestamp, 'send');
-        updateOperationsHistory(action, localString, myTimestamp);
-        console.log('send', myTimestamp)
+        updateOperationsHistory(action, localString, myTimestamp, id);
 
         let buf = { action, timestamp: myTimestamp, cid: id }
-        serversSockets.forEach(serverSocket => serverSocket.write(JSON.stringify(buf)));
-        clientsSockets.forEach(clientSocket => clientSocket.write(JSON.stringify(buf)));
+        setTimeout(() => serversSockets.forEach(serverSocket => serverSocket.write(JSON.stringify(buf))), Math.random() * 3000);
+        setTimeout(() => clientsSockets.forEach(clientSocket => clientSocket.write(JSON.stringify(buf))), Math.random() * 3000);
     }
 
     for (const action of myActions) {
-        setTimeout(() => sendMessage(action), Math.random() * 6000);
+        setTimeout(() => sendMessage(action), Math.random() * 5000);
     }
 
 }
