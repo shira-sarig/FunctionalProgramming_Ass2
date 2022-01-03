@@ -8,4 +8,13 @@ abc
 insert e
 delete 2
 insert y 2
+insert b
+insert a
+insert d
+insert m
+insert a
+delete 4
+delete 3
+delete 2
+insert r
 

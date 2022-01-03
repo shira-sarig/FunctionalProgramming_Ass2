@@ -1,9 +1,12 @@
 const net = require('net');
 const fs = require('fs');
 
+let SPECIAL_RUN_MODE = false;
+
 let id;
 let port;
 let localString;
+let originString;
 
 let otherClients = [];
 let myActions = [];
@@ -33,6 +36,7 @@ let actions;
 let rest;
 [id, rest] = divideStringOn(client, '\r\n');
 [port, localString] = divideStringOn(rest, '\r\n');
+originString = localString;
 while (others !== '') {
     let otherClient;
     [otherClient, others] = divideStringOn(others, '\r\n');
@@ -95,7 +99,6 @@ const updateGoodbyeCounter = () => {
 }
 
 const applyMerge = (action, timestamp, cid) => {
-    console.log(`Client ${id} started merging, from ${timestamp} time stamp, on ${localString}`); // TODO:: verify localString
     let index = operationsHistory.length - 1;
     while (index >= 0 && operationsHistory[index].timestamp > timestamp) {
         index--;
@@ -105,7 +108,8 @@ const applyMerge = (action, timestamp, cid) => {
             index--;
         }
     }
-    localString = operationsHistory[index === -1 ? index + 1 : index].updatedString;
+    localString = index === -1 ? originString : operationsHistory[index].updatedString;
+    console.log(`Client ${id} started merging, from ${index === -1 ? timestamp : operationsHistory[index].timestamp} time stamp, on ${localString}`);
     operationsHistory.splice(index + 1, 0, { action, updatedString: localString, timestamp, cid });
 
     for (let i = index + 1; i < operationsHistory.length; i++) {
@@ -192,14 +196,38 @@ setTimeout(() => {
 }, 10000)
 
 const eventLoop = async () => {
+    let numOfLocalUpdates = 0;
+    let lastUpdates = [];
+    let numOfActions = myActions.length;
+
     const sendMessage = async (action) => {
         applyActionToString(action);
+        numOfLocalUpdates++;
+        numOfActions--;
         updateTimestamp(myTimestamp, 'send');
         updateOperationsHistory(action, localString, myTimestamp, id);
+        let buf = { action, timestamp: myTimestamp, cid: id };
+        lastUpdates.push(buf);
 
-        let buf = { action, timestamp: myTimestamp, cid: id }
-        setTimeout(() => serversSockets.forEach(serverSocket => serverSocket.write(JSON.stringify(buf))), Math.random() * 3000);
-        setTimeout(() => clientsSockets.forEach(clientSocket => clientSocket.write(JSON.stringify(buf))), Math.random() * 3000);
+        if(SPECIAL_RUN_MODE) {
+            if (numOfLocalUpdates == 10) {
+                lastUpdates.forEach((update) => {
+                    setTimeout(() => serversSockets.forEach(serverSocket => serverSocket.write(JSON.stringify(update))), Math.random() * 3000);
+                    setTimeout(() => clientsSockets.forEach(clientSocket => clientSocket.write(JSON.stringify(update))), Math.random() * 3000);
+                });
+                numOfLocalUpdates = 0;
+                lastUpdates = [];
+            } else if (numOfActions === 0) {
+                lastUpdates.forEach((update) => {
+                    setTimeout(() => serversSockets.forEach(serverSocket => serverSocket.write(JSON.stringify(update))), Math.random() * 3000);
+                    setTimeout(() => clientsSockets.forEach(clientSocket => clientSocket.write(JSON.stringify(update))), Math.random() * 3000);
+                });
+            }
+        } else {
+            setTimeout(() => serversSockets.forEach(serverSocket => serverSocket.write(JSON.stringify(buf))), Math.random() * 3000);
+            setTimeout(() => clientsSockets.forEach(clientSocket => clientSocket.write(JSON.stringify(buf))), Math.random() * 3000);
+        }
+
     }
 
     for (const action of myActions) {

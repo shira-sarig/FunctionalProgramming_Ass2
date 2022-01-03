@@ -8,4 +8,13 @@ abc
 insert f
 delete 3
 insert x 3
+insert b
+insert g
+insert p
+insert d
+delete 4
+delete 2
+insert s
+insert h
+insert j
 
