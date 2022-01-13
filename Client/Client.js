@@ -1,5 +1,6 @@
 const net = require('net');
 const fs = require('fs');
+const _ = require('lodash')
 
 let SPECIAL_RUN_MODE = false;
 
@@ -87,11 +88,11 @@ const updateTimestamp = (messageTimestamp, eventType) => {
     }
 }
 
-const removeOperations = ({ action, localString, timestamp, cid }) => {
+const removeOperations = ({ action, updatedString, timestamp, cid }) => {
     let shouldRemoveOperation = otherClientsLatestOperationTimestamp.reduce((acc, curr) => acc && (timestamp <= curr), true);
 
     if (shouldRemoveOperation) {
-        let indexOfOperationToRemove = operationsHistory.indexOf({ action, localString, timestamp, cid});
+        let indexOfOperationToRemove = operationsHistory.findIndex((op) => _.isEqual(op, { action, updatedString, timestamp, cid }));
         operationsHistory.splice(indexOfOperationToRemove, 1);
         console.log(`Client ${id} removed operation ${JSON.stringify(action)}, ${timestamp} from storage`)
     }
@@ -133,7 +134,7 @@ const applyMerge = (action, timestamp, cid) => {
         console.log(`operation ${JSON.stringify(operationsHistory[i].action)}, ${operationsHistory[i].timestamp}, string: ${operationsHistory[i].updatedString}`)
     }
     console.log(`Client ${id} ended merging with string ${localString}, on timestamp ${operationsHistory[i - 1].timestamp}`)
-    removeOperations(operationsHistory[index]);
+    removeOperations(operationsHistory[index === -1 ? index + 1 : index]);
 }
 
 function getPosition(string, subString, index) {
@@ -145,20 +146,25 @@ const handleData = (socket, buffer) => {
         updateGoodbyeCounter();
     }
     else {
-        const parsedMessage = JSON.parse(buffer.toString().substring(0, getPosition(buffer.toString(), "}", 2) + 1));
-        const { action, timestamp, cid } = parsedMessage;
-        otherClientsLatestOperationTimestamp[cid - 1] = timestamp;
-        updateTimestamp(timestamp, 'receive');
-        console.log(`Client ${id} received an update operation ${JSON.stringify(action)}, ${timestamp} from client ${cid}`);
-        const index = operationsHistory.length - 1;
-        if (index >= 0 && 
-            (timestamp < operationsHistory[index].timestamp || 
-                (timestamp === operationsHistory[index].timestamp && cid < operationsHistory[index].cid))) {
-            applyMerge(action, timestamp, cid);
-        }
-        else {
-            applyActionToString(action);
-            updateOperationsHistory(action, localString, timestamp, cid);
+        // update strings while buffer still has messages
+        while(buffer.length > 0) {
+            const parsedMessage = JSON.parse(buffer.toString().substring(0, getPosition(buffer.toString(), "}", 2) + 1));
+            const { action, timestamp, cid } = parsedMessage;
+            otherClientsLatestOperationTimestamp[cid - 1] = timestamp;
+            updateTimestamp(timestamp, 'receive');
+            console.log(`Client ${id} received an update operation ${JSON.stringify(action)}, ${timestamp} from client ${cid}`);
+            const index = operationsHistory.length - 1;
+            if (index >= 0 && 
+                (timestamp < operationsHistory[index].timestamp || 
+                    (timestamp === operationsHistory[index].timestamp && cid < operationsHistory[index].cid))) {
+                applyMerge(action, timestamp, cid);
+            }
+            else {
+                applyActionToString(action);
+                updateOperationsHistory(action, localString, timestamp, cid);
+            }
+            // buffer will start from next action
+            buffer = Buffer.from(buffer.toString().substring(getPosition(buffer.toString(), "}", 2) + 1))
         }
     }
 }
@@ -220,9 +226,14 @@ setTimeout(() => {
             updateGoodbyeCounter();
             serversSockets.forEach(serverSocket => serverSocket.write(`goodbye ${id}`));
             clientsSockets.forEach(clientSocket => clientSocket.write(`goodbye ${id}`));
-        }, 20000)
+        }, 30000)
     })
 }, 10000)
+
+const writeToSockets = async (buf) => {
+    serversSockets.forEach(serverSocket => serverSocket.write(JSON.stringify(buf)));
+    clientsSockets.forEach(clientSocket => clientSocket.write(JSON.stringify(buf)));
+}
 
 const eventLoop = async () => {
     let numOfLocalUpdates = 0;
@@ -242,26 +253,28 @@ const eventLoop = async () => {
         if(SPECIAL_RUN_MODE) {
             if (numOfLocalUpdates === 10) {
                 lastUpdates.forEach((update) => {
-                    serversSockets.forEach(serverSocket => serverSocket.write(JSON.stringify(update)));
-                    clientsSockets.forEach(clientSocket => clientSocket.write(JSON.stringify(update)));
+                    setTimeout(() => { writeToSockets(update) }, 3000);
                 });
                 numOfLocalUpdates = 0;
                 lastUpdates = [];
             } else if (numOfActions === 0) {
                 lastUpdates.forEach((update) => {
-                    serversSockets.forEach(serverSocket => serverSocket.write(JSON.stringify(update)));
-                    clientsSockets.forEach(clientSocket => clientSocket.write(JSON.stringify(update)));
+                    setTimeout(() => { writeToSockets(update) }, 3000);
                 });
             }
         } else {
-            serversSockets.forEach(serverSocket => serverSocket.write(JSON.stringify(buf)));
-            clientsSockets.forEach(clientSocket => clientSocket.write(JSON.stringify(buf)));
+            setTimeout(() => { writeToSockets(buf) }, 3000);
         }
 
     }
 
+    let i = 1;
+
     for (const action of myActions) {
-        setTimeout(() => sendMessage(action), Math.random() * 7000);
+        setTimeout(() => {
+            sendMessage(action)
+        }, i * 1000);
+        i++;
     }
 
 }
